@@ -1,0 +1,72 @@
+"""
+log_analyser.py
+---------------
+Analyses the CSV log produced by smoke_monitor.py.
+Prints summary statistics and detects smoke event periods.
+
+Usage:
+    python log_analyser.py --file smoke_log.csv
+"""
+
+import csv
+import argparse
+from collections import Counter
+
+
+def analyse(log_file: str) -> None:
+    rows = []
+
+    try:
+        with open(log_file, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    level = int(row["smoke_level"])
+                    status = row["status"].strip()
+                    rows.append({"ts": row["timestamp"], "level": level, "status": status})
+                except (ValueError, KeyError):
+                    continue
+    except FileNotFoundError:
+        print(f"File not found: {log_file}")
+        return
+
+    if not rows:
+        print("No data found.")
+        return
+
+    levels = [r["level"] for r in rows]
+    status_counts = Counter(r["status"] for r in rows)
+
+    print("\n=== Smoke Detector â€” Run Analysis ===")
+    print(f"Total readings  : {len(rows)}")
+    print(f"Min smoke level : {min(levels)}")
+    print(f"Max smoke level : {max(levels)}")
+    print(f"Avg smoke level : {sum(levels)/len(levels):.1f}")
+    print()
+    print(f"{'Status':<30} {'Count':>7} {'%':>8}")
+    print("-" * 48)
+    for status, count in status_counts.most_common():
+        pct = (count / len(rows)) * 100
+        print(f"{status:<30} {count:>7} {pct:>7.1f}%")
+    print("-" * 48)
+    print(f"{'TOTAL':<30} {len(rows):>7} {'100.0%':>8}\n")
+
+    # List smoke events
+    alert_periods = [r for r in rows if "ALERT" in r["status"].upper()]
+    if alert_periods:
+        print(f"âš ï¸  Smoke alert readings: {len(alert_periods)}")
+        print(f"   First detected : {alert_periods[0]['ts']}")
+        print(f"   Last detected  : {alert_periods[-1]['ts']}")
+    else:
+        print("âœ… No smoke alert detected during this run.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Analyse Smoke Detector serial log")
+    parser.add_argument("--file", type=str, default="smoke_log.csv", help="CSV log file path")
+    args = parser.parse_args()
+    analyse(args.file)
+
+
+if __name__ == "__main__":
+    main()

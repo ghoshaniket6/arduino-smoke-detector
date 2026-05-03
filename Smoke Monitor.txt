@@ -1,0 +1,108 @@
+"""
+smoke_monitor.py
+----------------
+Python companion script for the Arduino Smoke Detector.
+Reads live smoke sensor values via USB serial, logs to CSV,
+and triggers a desktop notification alert if smoke is detected.
+
+Requirements:
+    pip install pyserial plyer
+
+Usage:
+    python smoke_monitor.py --port COM3 --baud 9600
+    python smoke_monitor.py --port /dev/ttyUSB0 --baud 9600
+"""
+
+import serial
+import argparse
+import csv
+import time
+from datetime import datetime
+
+# Try to import plyer for desktop notifications (optional)
+try:
+    from plyer import notification
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
+    print("[INFO] 'plyer' not installed. Desktop notifications disabled.")
+    print("[INFO] Install with: pip install plyer\n")
+
+
+def send_alert(message: str) -> None:
+    """Send a desktop notification if plyer is available."""
+    if NOTIFICATIONS_AVAILABLE:
+        notification.notify(
+            title="âš ï¸ SMOKE ALERT",
+            message=message,
+            timeout=5
+        )
+
+
+def monitor(port: str, baud: int, log_file: str, threshold: int) -> None:
+    print(f"Connecting to {port} at {baud} baud...")
+
+    try:
+        ser = serial.Serial(port, baud, timeout=2)
+    except serial.SerialException as e:
+        print(f"Serial Error: {e}")
+        return
+
+    print(f"Connected. Logging to '{log_file}'. Press Ctrl+C to stop.\n")
+    print(f"{'Timestamp':<16} {'Raw Value':>10} {'Status':<20}")
+    print("-" * 50)
+
+    last_alert_time = 0
+    ALERT_COOLDOWN = 10  # seconds between repeated desktop alerts
+
+    with open(log_file, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["timestamp", "smoke_level", "status"])
+
+        try:
+            while True:
+                line = ser.readline().decode("utf-8", errors="ignore").strip()
+                if not line or not line.startswith("Smoke Level"):
+                    continue
+
+                # Parse line: "Smoke Level: 320 â€” Safe"
+                try:
+                    parts = line.split(":")
+                    rest = parts[1].strip()  # "320 â€” Safe"
+                    value_part, status_part = rest.split("â€”")
+                    smoke_value = int(value_part.strip())
+                    status = status_part.strip()
+                except (ValueError, IndexError):
+                    continue
+
+                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                print(f"{ts:<16} {smoke_value:>10} {status:<20}")
+                writer.writerow([ts, smoke_value, status])
+                csvfile.flush()
+
+                # Desktop notification on smoke detection
+                if smoke_value >= threshold:
+                    now = time.time()
+                    if now - last_alert_time > ALERT_COOLDOWN:
+                        send_alert(f"Smoke level: {smoke_value}. Check the device!")
+                        last_alert_time = now
+
+        except KeyboardInterrupt:
+            print("\nMonitoring stopped.")
+        finally:
+            ser.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Python Monitor for Arduino Smoke Detector")
+    parser.add_argument("--port",      type=str, default="COM3",                 help="Serial port")
+    parser.add_argument("--baud",      type=int, default=9600,                   help="Baud rate")
+    parser.add_argument("--log",       type=str, default="smoke_log.csv",        help="Output CSV log")
+    parser.add_argument("--threshold", type=int, default=400,                    help="Smoke alert threshold (0-1023)")
+    args = parser.parse_args()
+
+    monitor(args.port, args.baud, args.log, args.threshold)
+
+
+if __name__ == "__main__":
+    main()
